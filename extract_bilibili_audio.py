@@ -242,10 +242,14 @@ def run_osascript(script: str, *args: str) -> str:
         raise RuntimeError("Music.app automation requires macOS osascript")
     result = subprocess.run(
         [osascript, "-e", script, *args],
-        check=True,
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        stdout = result.stdout.strip()
+        details = stderr or stdout or f"exit status {result.returncode}"
+        raise RuntimeError(f"osascript failed: {details}")
     return result.stdout.strip()
 
 
@@ -305,6 +309,10 @@ on run argv
         on error
             set addedTrack to addedTracks
         end try
+        set track number of addedTrack to 1
+        set track count of addedTrack to 1
+        set disc number of addedTrack to 1
+        set disc count of addedTrack to 1
         set pid to persistent ID of addedTrack
         set cstatus to cloud status of addedTrack
         set trackLocation to ""
@@ -336,7 +344,7 @@ end run
     return run_osascript(script, persistent_id)
 
 
-def set_music_track_numbers(persistent_id: str) -> None:
+def try_set_music_track_numbers(persistent_id: str) -> None:
     script = """
 on run argv
     set pid to item 1 of argv
@@ -350,6 +358,18 @@ on run argv
 end run
 """
     run_osascript(script, persistent_id)
+
+
+def set_music_track_numbers(persistent_id: str, retries: int = 6) -> None:
+    last_error = None
+    for _ in range(retries):
+        try:
+            try_set_music_track_numbers(persistent_id)
+            return
+        except RuntimeError as exc:
+            last_error = exc
+            time.sleep(1)
+    raise RuntimeError(f"Could not set Music track numbers: {last_error}")
 
 
 def wait_for_music_cloud(persistent_id: str, timeout: int) -> str:
