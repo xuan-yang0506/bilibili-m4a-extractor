@@ -44,6 +44,17 @@ To import the final `.m4a` into macOS Music.app after it exists:
 If `outputs/<artist> - <track>.m4a` already exists, the script skips downloading
 and remuxing, then imports that existing file directly. Music.app handles any
 Apple Music library sync/upload after import, if sync is enabled for your account.
+The import is idempotent: if a matching Music track already exists, the script
+prints its existing cloud status instead of adding a duplicate.
+
+To wait for Music.app to report that the track is cloud-ready:
+
+```sh
+.venv/bin/python extract_bilibili_audio.py "https://b23.tv/okSKQj7" --import-to-music --wait-for-cloud
+```
+
+This polls Music's `cloud status` until it is `uploaded`, `matched`,
+`purchased`, or `subscription`, or until `--cloud-timeout` seconds elapse.
 
 The script also accepts a saved Bilibili page dump containing `window.__playinfo__`
 and `window.__INITIAL_STATE__`:

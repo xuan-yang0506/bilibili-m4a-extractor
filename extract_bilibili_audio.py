@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 import zlib
 from pathlib import Path
@@ -23,6 +24,7 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/126.0.0.0 Safari/537.36"
 )
+READY_CLOUD_STATUSES = {"uploaded", "matched", "purchased", "subscription"}
 
 
 def load_inline_json(page: str, marker: str) -> dict:
@@ -221,19 +223,126 @@ def remux_audio(source: Path, dest: Path) -> None:
     tmp.replace(dest)
 
 
-def import_to_music(audio_file: Path) -> None:
+def run_osascript(script: str, *args: str) -> str:
     osascript = shutil.which("osascript")
     if not osascript:
-        raise RuntimeError("--import-to-music requires macOS osascript")
+        raise RuntimeError("Music.app automation requires macOS osascript")
+    result = subprocess.run(
+        [osascript, "-e", script, *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
+
+def parse_music_track_info(value: str) -> dict[str, str] | None:
+    if not value:
+        return None
+    persistent_id, cloud_status, location = (value.split("\t", 2) + ["", ""])[:3]
+    return {
+        "persistent_id": persistent_id,
+        "cloud_status": cloud_status,
+        "location": location,
+    }
+
+
+def find_music_track(
+    track_title: str,
+    artist: str,
+    album: str,
+    source_key: str,
+) -> dict[str, str] | None:
     script = """
 on run argv
+    set trackName to item 1 of argv
+    set trackArtist to item 2 of argv
+    set trackAlbum to item 3 of argv
+    set sourceKey to item 4 of argv
     tell application "Music"
-        add POSIX file (item 1 of argv)
+        set candidates to every track of library playlist 1 whose name is trackName and artist is trackArtist and album is trackAlbum
+        repeat with candidate in candidates
+            if sourceKey is "" or comment of candidate contains sourceKey then
+                set pid to persistent ID of candidate
+                set cstatus to cloud status of candidate
+                set trackLocation to ""
+                try
+                    set trackLocation to POSIX path of (location of candidate as alias)
+                end try
+                return (pid as text) & tab & (cstatus as text) & tab & trackLocation
+            end if
+        end repeat
+    end tell
+    return ""
+end run
+"""
+    return parse_music_track_info(
+        run_osascript(script, track_title, artist, album, source_key)
+    )
+
+
+def add_file_to_music(audio_file: Path) -> dict[str, str]:
+    script = """
+on run argv
+    set audioPath to item 1 of argv
+    tell application "Music"
+        set addedTracks to add POSIX file audioPath
+        try
+            set addedTrack to item 1 of addedTracks
+        on error
+            set addedTrack to addedTracks
+        end try
+        set pid to persistent ID of addedTrack
+        set cstatus to cloud status of addedTrack
+        set trackLocation to ""
+        try
+            set trackLocation to POSIX path of (location of addedTrack as alias)
+        end try
+        return (pid as text) & tab & (cstatus as text) & tab & trackLocation
     end tell
 end run
 """
-    subprocess.run([osascript, "-e", script, str(audio_file.resolve())], check=True)
+    track_info = parse_music_track_info(
+        run_osascript(script, str(audio_file.resolve()))
+    )
+    if not track_info:
+        raise RuntimeError("Music.app did not return the imported track")
+    return track_info
+
+
+def get_music_cloud_status(persistent_id: str) -> str:
+    script = """
+on run argv
+    set pid to item 1 of argv
+    tell application "Music"
+        set candidate to first track of library playlist 1 whose persistent ID is pid
+        return (cloud status of candidate as text)
+    end tell
+end run
+"""
+    return run_osascript(script, persistent_id)
+
+
+def wait_for_music_cloud(persistent_id: str, timeout: int) -> str:
+    deadline = time.monotonic() + timeout
+    last_status = get_music_cloud_status(persistent_id)
+    while last_status not in READY_CLOUD_STATUSES and time.monotonic() < deadline:
+        time.sleep(5)
+        last_status = get_music_cloud_status(persistent_id)
+    return last_status
+
+
+def import_to_music(
+    audio_file: Path,
+    track_title: str,
+    artist: str,
+    album: str,
+    source_key: str,
+) -> tuple[str, dict[str, str]]:
+    existing = find_music_track(track_title, artist, album, source_key)
+    if existing:
+        return "exists", existing
+    return "imported", add_file_to_music(audio_file)
 
 
 def image_format(data: bytes) -> int:
@@ -268,7 +377,20 @@ def main() -> int:
         action="store_true",
         help="Import the final .m4a into macOS Music.app after it exists",
     )
+    parser.add_argument(
+        "--wait-for-cloud",
+        action="store_true",
+        help="After importing, wait for Music.app to report a cloud-ready status",
+    )
+    parser.add_argument(
+        "--cloud-timeout",
+        type=int,
+        default=300,
+        help="Seconds to wait with --wait-for-cloud (default: 300)",
+    )
     args = parser.parse_args()
+    if args.wait_for_cloud and not args.import_to_music:
+        raise ValueError("--wait-for-cloud requires --import-to-music")
 
     page, fetched_url = load_page(args.source)
     initial_state = load_inline_json(page, "window.__INITIAL_STATE__=")
@@ -276,6 +398,7 @@ def main() -> int:
     source_url = infer_source_url(args.source_url, fetched_url, initial_state, json_ld)
 
     video_data = initial_state.get("videoData") or {}
+    video_key = video_data.get("bvid") or source_url
     video_title = (
         json_ld.get("name")
         or video_data.get("title")
@@ -345,8 +468,25 @@ def main() -> int:
         status = "generated"
 
     if args.import_to_music:
-        import_to_music(final_path)
+        import_status, music_track = import_to_music(
+            final_path,
+            track_title,
+            artist,
+            args.album,
+            video_key,
+        )
         print(f"music_imported={final_path}")
+        print(f"music_import_status={import_status}")
+        print(f"music_track_id={music_track['persistent_id']}")
+        print(f"music_cloud_status={music_track['cloud_status']}")
+        if music_track["location"]:
+            print(f"music_location={music_track['location']}")
+        if args.wait_for_cloud:
+            cloud_status = wait_for_music_cloud(
+                music_track["persistent_id"],
+                args.cloud_timeout,
+            )
+            print(f"music_cloud_status_after_wait={cloud_status}")
 
     print(f"final={final_path}")
     print(f"status={status}")
