@@ -10,6 +10,7 @@ ready to import into Apple Music.
 ## Contents
 
 - `extract_bilibili_audio.py` - downloader/extractor script.
+- `Makefile` - convenience targets for extracting and importing.
 - `requirements.txt` - Python dependencies.
 - `.gitignore` - keeps generated audio, cover images, source streams, dumps, and virtualenv files out of Git.
 
@@ -22,7 +23,7 @@ material and should not be committed to this repository.
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python extract_bilibili_audio.py "https://b23.tv/okSKQj7"
+make extract SOURCE="https://b23.tv/okSKQj7"
 ```
 
 The input can be a plain Bilibili URL, a `b23.tv` short link, or copied share
@@ -45,7 +46,7 @@ the same album.
 To import the final `.m4a` into macOS Music.app after it exists:
 
 ```sh
-.venv/bin/python extract_bilibili_audio.py "https://b23.tv/okSKQj7" --import-to-music
+make import SOURCE="https://b23.tv/okSKQj7"
 ```
 
 If `outputs/<artist> - <track>.m4a` already exists, the script skips downloading
