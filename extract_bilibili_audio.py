@@ -25,6 +25,10 @@ USER_AGENT = (
     "Chrome/126.0.0.0 Safari/537.36"
 )
 READY_CLOUD_STATUSES = {"uploaded", "matched", "purchased", "subscription"}
+DEFAULT_TRACK_NUMBER = 1
+DEFAULT_TRACK_COUNT = 1
+DEFAULT_DISC_NUMBER = 1
+DEFAULT_DISC_COUNT = 1
 
 
 def load_inline_json(page: str, marker: str) -> dict:
@@ -223,6 +227,15 @@ def remux_audio(source: Path, dest: Path) -> None:
     tmp.replace(dest)
 
 
+def set_m4a_track_numbers(audio_file: Path) -> None:
+    audio = MP4(audio_file)
+    if audio.tags is None:
+        audio.add_tags()
+    audio["trkn"] = [(DEFAULT_TRACK_NUMBER, DEFAULT_TRACK_COUNT)]
+    audio["disk"] = [(DEFAULT_DISC_NUMBER, DEFAULT_DISC_COUNT)]
+    audio.save()
+
+
 def run_osascript(script: str, *args: str) -> str:
     osascript = shutil.which("osascript")
     if not osascript:
@@ -321,6 +334,22 @@ on run argv
 end run
 """
     return run_osascript(script, persistent_id)
+
+
+def set_music_track_numbers(persistent_id: str) -> None:
+    script = """
+on run argv
+    set pid to item 1 of argv
+    tell application "Music"
+        set candidate to first track of library playlist 1 whose persistent ID is pid
+        set track number of candidate to 1
+        set track count of candidate to 1
+        set disc number of candidate to 1
+        set disc count of candidate to 1
+    end tell
+end run
+"""
+    run_osascript(script, persistent_id)
 
 
 def wait_for_music_cloud(persistent_id: str, timeout: int) -> str:
@@ -460,12 +489,16 @@ def main() -> int:
         if year:
             audio["\xa9day"] = [year]
         audio["\xa9gen"] = ["Cover"]
+        audio["trkn"] = [(DEFAULT_TRACK_NUMBER, DEFAULT_TRACK_COUNT)]
+        audio["disk"] = [(DEFAULT_DISC_NUMBER, DEFAULT_DISC_COUNT)]
         audio["\xa9cmt"] = [f"{video_title}\n{source_url}"]
         if description:
             audio["desc"] = [description]
         audio["covr"] = [MP4Cover(cover_data, imageformat=image_format(cover_data))]
         audio.save()
         status = "generated"
+
+    set_m4a_track_numbers(final_path)
 
     if args.import_to_music:
         import_status, music_track = import_to_music(
@@ -475,9 +508,12 @@ def main() -> int:
             args.album,
             video_key,
         )
+        set_music_track_numbers(music_track["persistent_id"])
         print(f"music_imported={final_path}")
         print(f"music_import_status={import_status}")
         print(f"music_track_id={music_track['persistent_id']}")
+        print("music_track_number=1/1")
+        print("music_disc_number=1/1")
         print(f"music_cloud_status={music_track['cloud_status']}")
         if music_track["location"]:
             print(f"music_location={music_track['location']}")

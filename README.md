@@ -35,6 +35,8 @@ This creates:
 - `outputs/<artist> - <track>.cover.jpg`
 - `outputs/<artist> - <track>.source-<audio-id>.m4s`
 
+The generated `.m4a` is tagged as track `1 of 1` and disc `1 of 1`.
+
 To import the final `.m4a` into macOS Music.app after it exists:
 
 ```sh
@@ -46,6 +48,7 @@ and remuxing, then imports that existing file directly. Music.app handles any
 Apple Music library sync/upload after import, if sync is enabled for your account.
 The import is idempotent: if a matching Music track already exists, the script
 prints its existing cloud status instead of adding a duplicate.
+Music.app track and disc fields are also normalized to `1 of 1`.
 
 To wait for Music.app to report that the track is cloud-ready:
 
