@@ -309,10 +309,6 @@ on run argv
         on error
             set addedTrack to addedTracks
         end try
-        set track number of addedTrack to 1
-        set track count of addedTrack to 1
-        set disc number of addedTrack to 1
-        set disc count of addedTrack to 1
         set pid to persistent ID of addedTrack
         set cstatus to cloud status of addedTrack
         set trackLocation to ""
@@ -360,16 +356,16 @@ end run
     run_osascript(script, persistent_id)
 
 
-def set_music_track_numbers(persistent_id: str, retries: int = 6) -> None:
+def set_music_track_numbers(persistent_id: str, retries: int = 6) -> str | None:
     last_error = None
     for _ in range(retries):
         try:
             try_set_music_track_numbers(persistent_id)
-            return
+            return None
         except RuntimeError as exc:
             last_error = exc
             time.sleep(1)
-    raise RuntimeError(f"Could not set Music track numbers: {last_error}")
+    return f"Could not set Music track numbers: {last_error}"
 
 
 def wait_for_music_cloud(persistent_id: str, timeout: int) -> str:
@@ -528,12 +524,14 @@ def main() -> int:
             args.album,
             video_key,
         )
-        set_music_track_numbers(music_track["persistent_id"])
+        music_number_warning = set_music_track_numbers(music_track["persistent_id"])
         print(f"music_imported={final_path}")
         print(f"music_import_status={import_status}")
         print(f"music_track_id={music_track['persistent_id']}")
         print("music_track_number=1/1")
         print("music_disc_number=1/1")
+        if music_number_warning:
+            print(f"warning={music_number_warning}", file=sys.stderr)
         print(f"music_cloud_status={music_track['cloud_status']}")
         if music_track["location"]:
             print(f"music_location={music_track['location']}")
