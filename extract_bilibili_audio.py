@@ -13,7 +13,7 @@ import urllib.request
 import zlib
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 from mutagen.mp4 import MP4, MP4Cover
 
@@ -97,6 +97,50 @@ def infer_source_url(
     return "https://www.bilibili.com/"
 
 
+def fetch_playinfo_api(initial_state: dict, source_url: str) -> dict:
+    video_data = initial_state.get("videoData") or {}
+    bvid = video_data.get("bvid")
+    cid = video_data.get("cid")
+    if not cid and video_data.get("pages"):
+        cid = video_data["pages"][0].get("cid")
+    if not bvid or not cid:
+        raise ValueError("Could not find bvid/cid for Bilibili playurl API")
+
+    params = urlencode(
+        {
+            "bvid": bvid,
+            "cid": cid,
+            "qn": "0",
+            "fnval": "4048",
+            "fnver": "0",
+            "fourk": "1",
+        }
+    )
+    req = urllib.request.Request(
+        f"https://api.bilibili.com/x/player/playurl?{params}",
+        headers={
+            **request_headers(source_url),
+            "Accept": "application/json,text/plain,*/*",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError) as exc:
+        raise RuntimeError(f"Could not fetch Bilibili playurl API: {exc}") from exc
+
+    if data.get("code") != 0:
+        raise RuntimeError(f"Bilibili playurl API failed: {data.get('message')}")
+    return data
+
+
+def load_playinfo(page: str, initial_state: dict, source_url: str) -> dict:
+    try:
+        return load_inline_json(page, "window.__playinfo__=")
+    except ValueError:
+        return fetch_playinfo_api(initial_state, source_url)
+
+
 def normalize_url(url: str) -> str:
     if url.startswith("//"):
         url = "https:" + url
@@ -163,12 +207,35 @@ def remux_audio(source: Path, dest: Path) -> None:
     tmp.replace(dest)
 
 
+def import_to_music(audio_file: Path) -> None:
+    osascript = shutil.which("osascript")
+    if not osascript:
+        raise RuntimeError("--import-to-music requires macOS osascript")
+
+    script = """
+on run argv
+    tell application "Music"
+        add POSIX file (item 1 of argv)
+    end tell
+end run
+"""
+    subprocess.run([osascript, "-e", script, str(audio_file.resolve())], check=True)
+
+
 def image_format(data: bytes) -> int:
     if data.startswith(b"\xff\xd8\xff"):
         return MP4Cover.FORMAT_JPEG
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return MP4Cover.FORMAT_PNG
     raise ValueError("Cover image is neither JPEG nor PNG")
+
+
+def find_existing_source_audio(out_dir: Path, stem: str) -> Path | None:
+    prefix = f"{stem}.source-"
+    for candidate in sorted(out_dir.glob("*.m4s")):
+        if candidate.name.startswith(prefix):
+            return candidate
+    return None
 
 
 def main() -> int:
@@ -182,19 +249,17 @@ def main() -> int:
         "--source-url",
         help="Original Bilibili URL to write into metadata when source is a local dump",
     )
+    parser.add_argument(
+        "--import-to-music",
+        action="store_true",
+        help="Import the final .m4a into macOS Music.app after it exists",
+    )
     args = parser.parse_args()
 
     page, fetched_url = load_page(args.source)
-    playinfo = load_inline_json(page, "window.__playinfo__=")
     initial_state = load_inline_json(page, "window.__INITIAL_STATE__=")
     json_ld = load_json_ld(page)
     source_url = infer_source_url(args.source_url, fetched_url, initial_state, json_ld)
-
-    audio_streams = playinfo["data"]["dash"]["audio"]
-    best_audio = max(audio_streams, key=lambda item: int(item.get("bandwidth") or 0))
-    audio_url = best_audio.get("baseUrl") or best_audio.get("base_url")
-    if not audio_url:
-        raise ValueError("Best audio stream did not include a URL")
 
     video_data = initial_state.get("videoData") or {}
     video_title = (
@@ -222,39 +287,64 @@ def main() -> int:
     cover_url = original_bili_image(thumbnails[0])
 
     stem = safe_filename(f"{artist} - {track_title}")
-    raw_audio = args.out_dir / f"{stem}.source-{best_audio.get('id', 'audio')}.m4s"
     cover_path = args.out_dir / f"{stem}.cover.jpg"
     final_path = args.out_dir / f"{stem}.m4a"
+    raw_audio = find_existing_source_audio(args.out_dir, stem)
+    audio_id = None
+    bandwidth = None
 
-    referer = source_url
-    download(audio_url, raw_audio, referer)
-    download(cover_url, cover_path, referer)
-    remux_audio(raw_audio, final_path)
+    if final_path.exists():
+        status = "exists"
+    else:
+        playinfo = load_playinfo(page, initial_state, source_url)
+        audio_streams = playinfo["data"]["dash"]["audio"]
+        best_audio = max(audio_streams, key=lambda item: int(item.get("bandwidth") or 0))
+        audio_url = best_audio.get("baseUrl") or best_audio.get("base_url")
+        if not audio_url:
+            raise ValueError("Best audio stream did not include a URL")
 
-    cover_data = cover_path.read_bytes()
-    audio = MP4(final_path)
-    if audio.tags is None:
-        audio.add_tags()
-    audio["\xa9nam"] = [track_title]
-    audio["\xa9ART"] = [artist]
-    audio["aART"] = [artist]
-    audio["\xa9alb"] = [args.album]
-    if year:
-        audio["\xa9day"] = [year]
-    audio["\xa9gen"] = ["Cover"]
-    audio["\xa9cmt"] = [f"{video_title}\n{source_url}"]
-    if description:
-        audio["desc"] = [description]
-    audio["covr"] = [MP4Cover(cover_data, imageformat=image_format(cover_data))]
-    audio.save()
+        audio_id = best_audio.get("id")
+        bandwidth = best_audio.get("bandwidth")
+        raw_audio = args.out_dir / f"{stem}.source-{audio_id or 'audio'}.m4s"
+
+        referer = source_url
+        download(audio_url, raw_audio, referer)
+        download(cover_url, cover_path, referer)
+        remux_audio(raw_audio, final_path)
+
+        cover_data = cover_path.read_bytes()
+        audio = MP4(final_path)
+        if audio.tags is None:
+            audio.add_tags()
+        audio["\xa9nam"] = [track_title]
+        audio["\xa9ART"] = [artist]
+        audio["aART"] = [artist]
+        audio["\xa9alb"] = [args.album]
+        if year:
+            audio["\xa9day"] = [year]
+        audio["\xa9gen"] = ["Cover"]
+        audio["\xa9cmt"] = [f"{video_title}\n{source_url}"]
+        if description:
+            audio["desc"] = [description]
+        audio["covr"] = [MP4Cover(cover_data, imageformat=image_format(cover_data))]
+        audio.save()
+        status = "generated"
+
+    if args.import_to_music:
+        import_to_music(final_path)
+        print(f"music_imported={final_path}")
 
     print(f"final={final_path}")
-    print(f"source_audio={raw_audio}")
-    print(f"cover={cover_path}")
+    print(f"status={status}")
+    if raw_audio:
+        print(f"source_audio={raw_audio}")
+    if cover_path.exists():
+        print(f"cover={cover_path}")
     print(f"track={track_title}")
     print(f"artist={artist}")
     print(f"source_url={source_url}")
-    print(f"audio_id={best_audio.get('id')} bandwidth={best_audio.get('bandwidth')}")
+    if audio_id or bandwidth:
+        print(f"audio_id={audio_id} bandwidth={bandwidth}")
     return 0
 
 

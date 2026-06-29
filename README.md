@@ -31,6 +31,16 @@ This creates:
 - `outputs/<artist> - <track>.cover.jpg`
 - `outputs/<artist> - <track>.source-<audio-id>.m4s`
 
+To import the final `.m4a` into macOS Music.app after it exists:
+
+```sh
+.venv/bin/python extract_bilibili_audio.py "https://b23.tv/okSKQj7" --import-to-music
+```
+
+If `outputs/<artist> - <track>.m4a` already exists, the script skips downloading
+and remuxing, then imports that existing file directly. Music.app handles any
+Apple Music library sync/upload after import, if sync is enabled for your account.
+
 The script also accepts a saved Bilibili page dump containing `window.__playinfo__`
 and `window.__INITIAL_STATE__`:
 
