@@ -1,0 +1,8 @@
+.venv/
+outputs/
+dist/
+*.dump
+*.tmp
+*.tmp.m4a
+.DS_Store
+__pycache__/
