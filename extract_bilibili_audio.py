@@ -188,6 +188,10 @@ def choose_track_title(video_title: str) -> str:
     return video_title.split("|", 1)[0].strip() or video_title
 
 
+def default_album_title(track_title: str) -> str:
+    return f"{track_title} - Single"
+
+
 def request_headers(referer: str) -> dict[str, str]:
     return {
         "User-Agent": USER_AGENT,
@@ -227,10 +231,11 @@ def remux_audio(source: Path, dest: Path) -> None:
     tmp.replace(dest)
 
 
-def set_m4a_track_numbers(audio_file: Path) -> None:
+def set_m4a_single_metadata(audio_file: Path, album: str) -> None:
     audio = MP4(audio_file)
     if audio.tags is None:
         audio.add_tags()
+    audio["\xa9alb"] = [album]
     audio["trkn"] = [(DEFAULT_TRACK_NUMBER, DEFAULT_TRACK_COUNT)]
     audio["disk"] = [(DEFAULT_DISC_NUMBER, DEFAULT_DISC_COUNT)]
     audio.save()
@@ -277,9 +282,9 @@ on run argv
     set trackAlbum to item 3 of argv
     set sourceKey to item 4 of argv
     tell application "Music"
-        set candidates to every track of library playlist 1 whose name is trackName and artist is trackArtist and album is trackAlbum
+        set candidates to every track of library playlist 1 whose name is trackName and artist is trackArtist
         repeat with candidate in candidates
-            if sourceKey is "" or comment of candidate contains sourceKey then
+            if (sourceKey is not "" and comment of candidate contains sourceKey) or (sourceKey is "" and album of candidate is trackAlbum) then
                 set pid to persistent ID of candidate
                 set cstatus to cloud status of candidate
                 set trackLocation to ""
@@ -340,12 +345,14 @@ end run
     return run_osascript(script, persistent_id)
 
 
-def try_set_music_track_numbers(persistent_id: str) -> None:
+def try_set_music_single_metadata(persistent_id: str, album: str) -> None:
     script = """
 on run argv
     set pid to item 1 of argv
+    set trackAlbum to item 2 of argv
     tell application "Music"
         set candidate to first track of library playlist 1 whose persistent ID is pid
+        set album of candidate to trackAlbum
         set track number of candidate to 1
         set track count of candidate to 1
         set disc number of candidate to 1
@@ -353,19 +360,23 @@ on run argv
     end tell
 end run
 """
-    run_osascript(script, persistent_id)
+    run_osascript(script, persistent_id, album)
 
 
-def set_music_track_numbers(persistent_id: str, retries: int = 6) -> str | None:
+def set_music_single_metadata(
+    persistent_id: str,
+    album: str,
+    retries: int = 6,
+) -> str | None:
     last_error = None
     for _ in range(retries):
         try:
-            try_set_music_track_numbers(persistent_id)
+            try_set_music_single_metadata(persistent_id, album)
             return None
         except RuntimeError as exc:
             last_error = exc
             time.sleep(1)
-    return f"Could not set Music track numbers: {last_error}"
+    return f"Could not set Music album/track numbers: {last_error}"
 
 
 def wait_for_music_cloud(persistent_id: str, timeout: int) -> str:
@@ -412,7 +423,7 @@ def main() -> int:
     )
     parser.add_argument("source", help="Bilibili/b23 URL or a saved Bilibili page dump")
     parser.add_argument("--out-dir", type=Path, default=Path("outputs"))
-    parser.add_argument("--album", default="Bilibili")
+    parser.add_argument("--album", help="Album title (default: '<track> - Single')")
     parser.add_argument(
         "--source-url",
         help="Original Bilibili URL to write into metadata when source is a local dump",
@@ -450,6 +461,7 @@ def main() -> int:
         or "Bilibili audio"
     )
     track_title = choose_track_title(video_title)
+    album = args.album or default_album_title(track_title)
     artist = (
         (json_ld.get("author") or {}).get("name")
         or (video_data.get("owner") or {}).get("name")
@@ -501,7 +513,7 @@ def main() -> int:
         audio["\xa9nam"] = [track_title]
         audio["\xa9ART"] = [artist]
         audio["aART"] = [artist]
-        audio["\xa9alb"] = [args.album]
+        audio["\xa9alb"] = [album]
         if year:
             audio["\xa9day"] = [year]
         audio["\xa9gen"] = ["Cover"]
@@ -514,24 +526,28 @@ def main() -> int:
         audio.save()
         status = "generated"
 
-    set_m4a_track_numbers(final_path)
+    set_m4a_single_metadata(final_path, album)
 
     if args.import_to_music:
         import_status, music_track = import_to_music(
             final_path,
             track_title,
             artist,
-            args.album,
+            album,
             video_key,
         )
-        music_number_warning = set_music_track_numbers(music_track["persistent_id"])
+        music_metadata_warning = set_music_single_metadata(
+            music_track["persistent_id"],
+            album,
+        )
         print(f"music_imported={final_path}")
         print(f"music_import_status={import_status}")
         print(f"music_track_id={music_track['persistent_id']}")
+        print(f"music_album={album}")
         print("music_track_number=1/1")
         print("music_disc_number=1/1")
-        if music_number_warning:
-            print(f"warning={music_number_warning}", file=sys.stderr)
+        if music_metadata_warning:
+            print(f"warning={music_metadata_warning}", file=sys.stderr)
         print(f"music_cloud_status={music_track['cloud_status']}")
         if music_track["location"]:
             print(f"music_location={music_track['location']}")
@@ -549,6 +565,7 @@ def main() -> int:
     if cover_path.exists():
         print(f"cover={cover_path}")
     print(f"track={track_title}")
+    print(f"album={album}")
     print(f"artist={artist}")
     print(f"source_url={source_url}")
     if audio_id or bandwidth:

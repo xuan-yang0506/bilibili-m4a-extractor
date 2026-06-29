@@ -35,7 +35,12 @@ This creates:
 - `outputs/<artist> - <track>.cover.jpg`
 - `outputs/<artist> - <track>.source-<audio-id>.m4s`
 
-The generated `.m4a` is tagged as track `1 of 1` and disc `1 of 1`.
+By default, each song is tagged as its own single: `<track> - Single`. For
+example, `月光` becomes the album `月光 - Single`. The generated `.m4a` is tagged
+as track `1 of 1` and disc `1 of 1`.
+
+Use `--album "Album Name"` only when you intentionally want multiple tracks in
+the same album.
 
 To import the final `.m4a` into macOS Music.app after it exists:
 
@@ -49,6 +54,8 @@ Apple Music library sync/upload after import, if sync is enabled for your accoun
 The import is idempotent: if a matching Music track already exists, the script
 prints its existing cloud status instead of adding a duplicate.
 Music.app track and disc fields are also normalized to `1 of 1`.
+If the track was previously imported under an older album name, the import step
+updates it to the current single album instead of adding a duplicate.
 
 To wait for Music.app to report that the track is cloud-ready:
 
