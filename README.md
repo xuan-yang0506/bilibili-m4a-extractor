@@ -25,6 +25,10 @@ python3 -m venv .venv
 .venv/bin/python extract_bilibili_audio.py "https://b23.tv/okSKQj7"
 ```
 
+The input can be a plain Bilibili URL, a `b23.tv` short link, or copied share
+text that contains a URL. Shell-escaped URL punctuation like `\?`, `\&`, and
+`\=` is normalized automatically.
+
 This creates:
 
 - `outputs/<artist> - <track>.m4a`

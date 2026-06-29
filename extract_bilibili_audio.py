@@ -53,6 +53,19 @@ def is_url(value: str) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
+def clean_source_text(value: str) -> str:
+    value = html.unescape(value.strip())
+    return re.sub(r"\\([:/?&=#%._~+-])", r"\1", value)
+
+
+def extract_source(value: str) -> str:
+    value = clean_source_text(value)
+    match = re.search(r"https?://[^\s\"'<>，。】）)]+", value)
+    if match:
+        return match.group(0).rstrip(".,，。")
+    return value
+
+
 def fetch_page(url: str) -> tuple[str, str]:
     req = urllib.request.Request(url, headers=request_headers("https://www.bilibili.com/"))
     try:
@@ -71,6 +84,7 @@ def fetch_page(url: str) -> tuple[str, str]:
 
 
 def load_page(source: str) -> tuple[str, str | None]:
+    source = extract_source(source)
     if is_url(source):
         return fetch_page(source)
     return Path(source).read_text(encoding="utf-8"), None
@@ -83,7 +97,7 @@ def infer_source_url(
     json_ld: dict,
 ) -> str:
     if explicit_url:
-        return explicit_url
+        return extract_source(explicit_url)
     if fetched_url:
         return fetched_url
     video_data = initial_state.get("videoData") or {}
