@@ -10,6 +10,7 @@ ready to import into Apple Music.
 ## Contents
 
 - `extract_bilibili_audio.py` - downloader/extractor script.
+- `download_bilibili_avatar.py` - user avatar downloader.
 - `Makefile` - convenience targets for extracting and importing.
 - `requirements.txt` - Python dependencies.
 - `.gitignore` - keeps generated audio, cover images, source streams, dumps, and virtualenv files out of Git.
@@ -57,6 +58,15 @@ prints its existing cloud status instead of adding a duplicate.
 Music.app track and disc fields are also normalized to `1 of 1`.
 If the track was previously imported under an older album name, the import step
 updates it to the current single album instead of adding a duplicate.
+
+To download the original avatar image for a Bilibili user:
+
+```sh
+make avatar SOURCE="https://space.bilibili.com/3493271057730096/dynamic"
+```
+
+This calls Bilibili's public user card API, reads the `face` field, removes any
+image resizing suffix, and writes the avatar to `outputs/`.
 
 To wait for Music.app to report that the track is cloud-ready:
 
