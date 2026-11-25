@@ -6,3 +6,4 @@ dist/
 *.tmp.m4a
 .DS_Store
 __pycache__/
+.bili-cookie

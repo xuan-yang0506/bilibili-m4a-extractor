@@ -3,6 +3,7 @@ SCRIPT ?= extract_bilibili_audio.py
 AVATAR_SCRIPT ?= download_bilibili_avatar.py
 SOURCE ?=
 OUT_DIR ?= outputs
+EXTRA_ARGS ?=
 
 .PHONY: check-source extract import avatar
 
@@ -15,10 +16,10 @@ check-source:
 	fi
 
 extract: check-source
-	$(PYTHON) $(SCRIPT) '$(SOURCE)'
+	$(PYTHON) $(SCRIPT) '$(SOURCE)' $(EXTRA_ARGS)
 
 import: check-source
-	$(PYTHON) $(SCRIPT) '$(SOURCE)' --import-to-music
+	$(PYTHON) $(SCRIPT) '$(SOURCE)' --import-to-music $(EXTRA_ARGS)
 
 avatar: check-source
 	$(PYTHON) $(AVATAR_SCRIPT) '$(SOURCE)' --out-dir '$(OUT_DIR)'

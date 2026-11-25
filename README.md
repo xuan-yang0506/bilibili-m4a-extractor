@@ -31,6 +31,22 @@ The input can be a plain Bilibili URL, a `b23.tv` short link, or copied share
 text that contains a URL. Shell-escaped URL punctuation like `\?`, `\&`, and
 `\=` is normalized automatically.
 
+By default, the script uses your logged-in Chrome session for member-only
+streams:
+
+```sh
+make extract SOURCE="https://b23.tv/okSKQj7"
+```
+
+On macOS, this reads Chrome's Bilibili cookies from the default profile and may
+ask Keychain for permission to access "Chrome Safe Storage". Chrome does not
+need to be open, but it must have a valid Bilibili login. To skip browser
+cookies and make an anonymous request:
+
+```sh
+make extract SOURCE="https://b23.tv/okSKQj7" EXTRA_ARGS="--no-cookies-from-browser"
+```
+
 This creates:
 
 - `outputs/<artist> - <track>.m4a`
@@ -85,15 +101,25 @@ and `window.__INITIAL_STATE__`:
   --source-url "https://www.bilibili.com/video/BV169dFBrEDt/"
 ```
 
-On macOS, `afconvert` is used to remux the source AAC stream without re-encoding.
-If `afconvert` is unavailable, the script falls back to copying the source stream
-before writing tags.
+The extractor chooses the highest available track in this order:
+
+1. Hi-Res FLAC (`30251`)
+2. Dolby audio (`30250`)
+3. Highest-bandwidth regular DASH audio, usually AAC (`30280`)
+
+Regular AAC and Dolby streams are kept without re-encoding. Hi-Res FLAC streams
+are converted losslessly to Apple Lossless ALAC so the final `.m4a` can be
+opened by Music.app.
+
+On macOS, `afconvert` is used to remux supported source streams without
+re-encoding. If `afconvert` is unavailable or cannot remux a stream, the script
+falls back to copying the source stream before writing tags.
 
 ## Example Audio
 
-- Codec: AAC-LC (`mp4a.40.2`)
+- Codec: Apple Lossless (`alac`) when Hi-Res is available, otherwise AAC-LC (`mp4a.40.2`)
 - Sample rate: 48 kHz
 - Channels: stereo
-- Bitrate: about 190 kbps
+- Bitrate: about 2.5 Mbps for tested Hi-Res ALAC, about 190 kbps for regular AAC
 - Duration: 245.89 seconds
 - Container: Apple/iTunes `.m4a`
