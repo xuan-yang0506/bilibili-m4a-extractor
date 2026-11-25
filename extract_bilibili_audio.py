@@ -409,7 +409,11 @@ def download(url: str | list[str], dest: Path, referer: str, label: str | None =
         for url_index, candidate_url in enumerate(urls, start=1):
             if tmp.exists():
                 tmp.unlink()
-            req = urllib.request.Request(candidate_url, headers=request_headers(referer))
+            # Some Bilibili CDN mirrors reject plain GETs (HTTP 567) unless a Range header is sent.
+            req = urllib.request.Request(
+                candidate_url,
+                headers={**request_headers(referer), "Range": "bytes=0-"},
+            )
             try:
                 with urllib.request.urlopen(req, timeout=90) as response, tmp.open("wb") as fh:
                     total_header = response.headers.get("Content-Length")
